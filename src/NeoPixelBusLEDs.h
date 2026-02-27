@@ -3,8 +3,15 @@
 */
 
 #include <typeinfo>
-#include <NeoPixelBusLg.h>
 #include <string>
+
+#ifdef ESP8266
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#elif defined(ESP32)
+#include <WiFi.h>
+#include <HTTPClient.h>
+#endif
 
 /****************************
  * 
@@ -12,9 +19,30 @@
  * 
  ************************** */
 
-#define LED_COUNT 24
+#define LED_COUNT 1
 #define RIGHTTOLEFT 0
 #define TEST_MODE 1
+
+// Enable Home Assistant output.
+// 1: RGB data controls a Home Assistant light entity (virtual LED mode)
+// 0: no output (keeps parsing data only)
+#define HOME_ASSISTANT_ENABLED 1
+
+// WiFi credentials used to reach Home Assistant
+#define HOME_ASSISTANT_WIFI_SSID "Wifi"
+#define HOME_ASSISTANT_WIFI_PASSWORD "WifiPassword"
+
+// Home Assistant API settings
+#define HOME_ASSISTANT_BASE_URL "http://192.168.1.2:8123"
+#define HOME_ASSISTANT_LIGHT_ENTITY "light.whatever_entity_of_your_light"
+#define HOME_ASSISTANT_API_TOKEN "longlivetoken"
+
+// Limit API call rate (in milliseconds)
+#define HOME_ASSISTANT_UPDATE_INTERVAL_MS 120
+
+// Connection behavior
+#define HOME_ASSISTANT_WIFI_RETRY_MS 5000
+#define HOME_ASSISTANT_CONNECT_TIMEOUT_MS 12000
 
 // LED BRIGHTNESS NANNY
 //  Think about why you want to go higher than this?
@@ -126,7 +154,12 @@
 //  See this: https://learn.adafruit.com/adafruit-neopixel-uberguide/powering-neopixels#estimating-power-requirements-2894486
 //
 // note: that this color is not limited by the luminance limit
-auto initialColor = RgbColor(120, 0, 0);
+struct StartupColor {
+    uint8_t R;
+    uint8_t G;
+    uint8_t B;
+};
+StartupColor initialColor = {120, 0, 0};
 
 
 /*************************
@@ -135,8 +168,195 @@ auto initialColor = RgbColor(120, 0, 0);
  * 
  ********************** */
 
-// Instantiate an LED Strip
-NeoPixelBusLg<colorSpec, method, NeoGammaTableMethod> neoLedStrip(LED_COUNT, DATA_PIN);
+struct VirtualRgbColor {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+};
+
+VirtualRgbColor virtualLeds[LED_COUNT];
+bool virtualLedsDirty = false;
+unsigned long lastHomeAssistantUpdateMs = 0;
+bool lastSentColorValid = false;
+uint8_t lastSentR = 0;
+uint8_t lastSentG = 0;
+uint8_t lastSentB = 0;
+unsigned long lastWifiAttemptMs = 0;
+
+void setVirtualPixelColor(uint16_t index, uint8_t r, uint8_t g, uint8_t b)
+{
+    if (index >= LED_COUNT)
+    {
+        return;
+    }
+
+    if (virtualLeds[index].r == r && virtualLeds[index].g == g && virtualLeds[index].b == b)
+    {
+        return;
+    }
+
+    virtualLeds[index].r = r;
+    virtualLeds[index].g = g;
+    virtualLeds[index].b = b;
+    virtualLedsDirty = true;
+}
+
+void homeAssistantEnsureWifiConnected()
+{
+#if HOME_ASSISTANT_ENABLED
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        return;
+    }
+
+    unsigned long now = millis();
+    if (now - lastWifiAttemptMs < HOME_ASSISTANT_WIFI_RETRY_MS)
+    {
+        return;
+    }
+
+    WiFi.mode(WIFI_STA);
+#ifdef ESP8266
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(true);
+#endif
+    WiFi.begin(HOME_ASSISTANT_WIFI_SSID, HOME_ASSISTANT_WIFI_PASSWORD);
+    lastWifiAttemptMs = now;
+#endif
+}
+
+void homeAssistantConnectAtStartup()
+{
+#if HOME_ASSISTANT_ENABLED
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        return;
+    }
+
+    WiFi.mode(WIFI_STA);
+#ifdef ESP8266
+    WiFi.setAutoReconnect(true);
+    WiFi.persistent(true);
+#endif
+    WiFi.begin(HOME_ASSISTANT_WIFI_SSID, HOME_ASSISTANT_WIFI_PASSWORD);
+
+    unsigned long startedAt = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - startedAt) < HOME_ASSISTANT_CONNECT_TIMEOUT_MS)
+    {
+        delay(150);
+        yield();
+    }
+
+    lastWifiAttemptMs = millis();
+#endif
+}
+
+void homeAssistantSendColor(uint8_t r, uint8_t g, uint8_t b)
+{
+#if HOME_ASSISTANT_ENABLED
+    homeAssistantEnsureWifiConnected();
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        return;
+    }
+
+    bool isOff = (r == 0 && g == 0 && b == 0);
+    String endpoint = String(HOME_ASSISTANT_BASE_URL) + "/api/services/light/" + (isOff ? "turn_off" : "turn_on");
+
+    String payload;
+    if (isOff)
+    {
+        payload = String("{\"entity_id\":\"") + HOME_ASSISTANT_LIGHT_ENTITY + "\"}";
+    }
+    else
+    {
+        uint8_t brightness = r;
+        if (g > brightness)
+        {
+            brightness = g;
+        }
+        if (b > brightness)
+        {
+            brightness = b;
+        }
+
+        payload = String("{\"entity_id\":\"") + HOME_ASSISTANT_LIGHT_ENTITY +
+                  "\",\"rgb_color\":[" + String(r) + "," + String(g) + "," + String(b) +
+                  "],\"brightness\":" + String(brightness) + "}";
+    }
+
+    HTTPClient http;
+#ifdef ESP8266
+    WiFiClient client;
+    if (!http.begin(client, endpoint))
+    {
+        return;
+    }
+#else
+    if (!http.begin(endpoint))
+    {
+        return;
+    }
+#endif
+
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Authorization", String("Bearer ") + HOME_ASSISTANT_API_TOKEN);
+
+    int httpCode = http.POST(payload);
+    http.end();
+
+    if (httpCode > 0)
+    {
+        lastSentR = r;
+        lastSentG = g;
+        lastSentB = b;
+        lastSentColorValid = true;
+        virtualLedsDirty = false;
+        lastHomeAssistantUpdateMs = millis();
+    }
+#endif
+}
+
+void homeAssistantFlushIfNeeded()
+{
+#if HOME_ASSISTANT_ENABLED
+    homeAssistantEnsureWifiConnected();
+
+    if (!virtualLedsDirty || LED_COUNT <= 0)
+    {
+        return;
+    }
+
+    unsigned long now = millis();
+    if (now - lastHomeAssistantUpdateMs < HOME_ASSISTANT_UPDATE_INTERVAL_MS)
+    {
+        return;
+    }
+
+    uint32_t sumR = 0;
+    uint32_t sumG = 0;
+    uint32_t sumB = 0;
+
+    for (uint16_t i = 0; i < LED_COUNT; i++)
+    {
+        sumR += virtualLeds[i].r;
+        sumG += virtualLeds[i].g;
+        sumB += virtualLeds[i].b;
+    }
+
+    uint8_t r = (uint8_t)(sumR / LED_COUNT);
+    uint8_t g = (uint8_t)(sumG / LED_COUNT);
+    uint8_t b = (uint8_t)(sumB / LED_COUNT);
+
+    if (lastSentColorValid && r == lastSentR && g == lastSentG && b == lastSentB)
+    {
+        virtualLedsDirty = false;
+        return;
+    }
+
+    homeAssistantSendColor(r, g, b);
+#endif
+}
 
 
 /**
@@ -144,28 +364,23 @@ NeoPixelBusLg<colorSpec, method, NeoGammaTableMethod> neoLedStrip(LED_COUNT, DAT
  */
 void neoPixelBusBegin()
 {
-#if ESP8266 && CONNECTION_TYPE != SERIAL
-const std::type_info &classType = typeid(method);
-const char *className = classType.name();
-const char *prefix = "NeoEsp8266Dma";
-if (std::string(className).find(prefix) == 0) {
-    Serial.begin(115200);
-    while (!Serial); // wait for serial attach
-    Serial.println("enabling serial due to the neopixelbus method used");
-}
-#endif
-    neoLedStrip.Begin();
-    neoLedStrip.Show();
+    homeAssistantConnectAtStartup();
+
+    for (int i = 0; i < LED_COUNT; i++)
+    {
+        virtualLeds[i].r = 0;
+        virtualLeds[i].g = 0;
+        virtualLeds[i].b = 0;
+    }
 
     if (TEST_MODE)
     {
         for (int i = 0; i < LED_COUNT; i++)
         {
-            neoLedStrip.SetPixelColor(i, initialColor);
+            setVirtualPixelColor(i, initialColor.R, initialColor.G, initialColor.B);
         }
-        neoLedStrip.Show();
+        homeAssistantFlushIfNeeded();
     }
-    neoLedStrip.SetLuminance(LUMINANCE_LIMIT);
 }
 
 void neoPixelBusRead()
@@ -191,11 +406,11 @@ void neoPixelBusRead()
 
                 if (RIGHTTOLEFT == 1)
                 {
-                    neoLedStrip.SetPixelColor(LED_COUNT - j - 1, RgbColor(r, g, b));
+                    setVirtualPixelColor(LED_COUNT - j - 1, r, g, b);
                 }
                 else
                 {
-                    neoLedStrip.SetPixelColor(j, RgbColor(r, g, b));
+                    setVirtualPixelColor(j, r, g, b);
                 }
             }
         }
@@ -214,11 +429,11 @@ void neoPixelBusRead()
 
                 if (RIGHTTOLEFT == 1)
                 {
-                    neoLedStrip.SetPixelColor(LED_COUNT - j - 1, RgbColor(r, g, b));
+                    setVirtualPixelColor(LED_COUNT - j - 1, r, g, b);
                 }
                 else
                 {
-                    neoLedStrip.SetPixelColor(j, RgbColor(r, g, b));
+                    setVirtualPixelColor(j, r, g, b);
                 }
             }
         }
@@ -237,11 +452,11 @@ void neoPixelBusRead()
             {
                 if (RIGHTTOLEFT == 1)
                 {
-                    neoLedStrip.SetPixelColor(LED_COUNT - j - 1, RgbColor(r, g, b));
+                    setVirtualPixelColor(LED_COUNT - j - 1, r, g, b);
                 }
                 else
                 {
-                    neoLedStrip.SetPixelColor(j, RgbColor(r, g, b));
+                    setVirtualPixelColor(j, r, g, b);
                 }
             }
         }
@@ -251,9 +466,8 @@ void neoPixelBusRead()
 }
 
 void neoPixelBusShow() {
-    if (LED_COUNT > 0 && neoLedStrip.IsDirty()) {
-        neoLedStrip.Show();
-    }
+    homeAssistantEnsureWifiConnected();
+    homeAssistantFlushIfNeeded();
 }
 
 int neoPixelBusCount() {
