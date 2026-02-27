@@ -14,15 +14,6 @@
 // 0: disable output logic
 #define HOME_ASSISTANT_ENABLED 1
 
-// WiFi credentials
-#define HOME_ASSISTANT_WIFI_SSID "Wifi"
-#define HOME_ASSISTANT_WIFI_PASSWORD "WifiPassword"
-
-// Home Assistant API settings
-#define HOME_ASSISTANT_BASE_URL "http://192.168.1.2:8123"
-#define HOME_ASSISTANT_LIGHT_ENTITY "light.whatever_entity_of_your_light"
-#define HOME_ASSISTANT_API_TOKEN "longlivetoken"
-
 // Timing settings
 #define HOME_ASSISTANT_UPDATE_INTERVAL_MS 120
 #define HOME_ASSISTANT_WIFI_RETRY_MS 5000

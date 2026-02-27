@@ -326,6 +326,9 @@ void Command_RGBLEDSCount() {
 			WS2812B_RGBLEDCOUNT + 
 			PL9823_RGBLEDCOUNT +
 			WS2801_RGBLEDCOUNT
+#ifdef INCLUDE_RGB_LEDS_HOMEASSISTANT
+	+ HOMEASSISTANT_RGBLEDCOUNT
+#endif
 #ifdef INCLUDE_RGB_LEDS_NEOPIXELBUS
 	+ neoPixelBusCount()
 #endif
@@ -344,6 +347,9 @@ void Command_RGBLEDSData()
 #ifdef INCLUDE_WS2801
 	shRGBLedsWS2801.read();
 #endif
+#ifdef INCLUDE_RGB_LEDS_HOMEASSISTANT
+	shRGBLedsHomeAssistant.read();
+#endif
 #ifdef INCLUDE_RGB_LEDS_NEOPIXELBUS
 	neoPixelBusRead();
 #endif
@@ -352,6 +358,9 @@ void Command_RGBLEDSData()
 #endif
 #ifdef INCLUDE_WS2801
 	shRGBLedsWS2801.show();
+#endif
+#ifdef INCLUDE_RGB_LEDS_HOMEASSISTANT
+	shRGBLedsHomeAssistant.show();
 #endif
 #ifdef INCLUDE_RGB_LEDS_NEOPIXELBUS
 	neoPixelBusShow();
