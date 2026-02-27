@@ -58,7 +58,7 @@ FullLoopbackStream incomingStream;
 
 // Known working features:
 //  
-#define INCLUDE_RGB_LEDS_NEOPIXELBUS      	  // use this instead of INCLUDE_WS2812B 
+//#define INCLUDE_RGB_LEDS_NEOPIXELBUS        // use this instead of INCLUDE_WS2812B 
 //#define INCLUDE_WS2812B                     // consider using INCLUDE_RGB_LEDS_NEOPIXELBUS {"Name":"INCLUDE_WS2812B","Type":"autodefine","Condition":"[WS2812B_RGBLEDCOUNT]>0"}
 //#define INCLUDE_WS2812B_MATRIX              //{"Name":"INCLUDE_WS2812B_MATRIX","Type":"autodefine","Condition":"[WS2812B_MATRIX_ENABLED]>0"}
 //#define INCLUDE_BUTTONS                     //{"Name":"INCLUDE_BUTTONS","Type":"autodefine","Condition":"[ENABLED_BUTTONS_COUNT]>0","IsInput":true}
@@ -82,6 +82,7 @@ FullLoopbackStream incomingStream;
 
 // Untested features, please open a GitHub Issue, or post in the discord if you try them
 //
+//#define INCLUDE_RGB_LEDS_HOMEASSISTANT      // virtual RGB leds -> Home Assistant
 //#define INCLUDE_WS2801                      //{"Name":"INCLUDE_WS2801","Type":"autodefine","Condition":"[WS2801_RGBLEDCOUNT]>0"}
 //#define INCLUDE_PL9823                      //{"Name":"INCLUDE_PL9823","Type":"autodefine","Condition":"[PL9823_RGBLEDCOUNT]>0"}
 //#define INCLUDE_LEDBACKPACK                 //{"Name":"INCLUDE_LEDBACKPACK","Type":"autodefine","Condition":"[ENABLE_ADA_HT16K33_7SEGMENTS]>0 || [ENABLE_ADA_HT16K33_BiColorMatrix]>0"}
@@ -317,6 +318,25 @@ SHMatrixHT16H33SingleColor shMatrixHT16H33SingleColor;
 #ifdef INCLUDE_RGB_LEDS_NEOPIXELBUS
 // Configure it here!
 #include <NeoPixelBusLEDs.h>
+#endif
+
+// -------------------------------------------------------
+// Home Assistant virtual RGB LEDs
+// -------------------------------------------------------
+#ifdef INCLUDE_RGB_LEDS_HOMEASSISTANT
+#define HOMEASSISTANT_RGBLEDCOUNT 1        //{"Group":"Home Assistant RGB Leds","Name":"HOMEASSISTANT_RGBLEDCOUNT","Title":"Virtual RGB leds count sent to Home Assistant","DefaultValue":"0","Type":"int","Max":150}
+
+// Home Assistant bridge configuration
+#define HOME_ASSISTANT_WIFI_SSID "Wifi"
+#define HOME_ASSISTANT_WIFI_PASSWORD "WifiPassword"
+#define HOME_ASSISTANT_BASE_URL "http://192.168.1.2:8123"
+#define HOME_ASSISTANT_LIGHT_ENTITY "light.whatever_entity_of_your_light"
+#define HOME_ASSISTANT_API_TOKEN "longlivetoken"
+
+#include "SHRGBLedsHomeAssistant.h"
+#define HOMEASSISTANT_RIGHTTOLEFT 0        //{"Name":"HOMEASSISTANT_RIGHTTOLEFT","Title":"Reverse virtual led order","DefaultValue":"0","Type":"bool","Condition":"HOMEASSISTANT_RGBLEDCOUNT>0"}
+#define HOMEASSISTANT_TESTMODE 1           //{"Name":"HOMEASSISTANT_TESTMODE","Title":"Testing mode on startup","DefaultValue":"0","Type":"bool","Condition":"HOMEASSISTANT_RGBLEDCOUNT>0"}
+SHRGBLedsHomeAssistant shRGBLedsHomeAssistant;
 #endif
 
 
@@ -1416,6 +1436,9 @@ void setup()
 #endif
 #ifdef INCLUDE_RGB_LEDS_NEOPIXELBUS
 	neoPixelBusBegin();
+#endif
+#ifdef INCLUDE_RGB_LEDS_HOMEASSISTANT
+	shRGBLedsHomeAssistant.begin(HOMEASSISTANT_RGBLEDCOUNT, HOMEASSISTANT_RIGHTTOLEFT, HOMEASSISTANT_TESTMODE);
 #endif
 }
 
